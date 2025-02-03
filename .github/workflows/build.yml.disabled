@@ -1,0 +1,79 @@
+name: Build and Test Minecraft Mod
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 21
+
+      - uses: burrunan/gradle-cache-action@v2
+        name: Build Project
+        with:
+          job-id: build
+          arguments: buildAll --stacktrace
+          gradle-version: 8.12
+        
+      - name: Upload mod jars
+        uses: actions/upload-artifact@v3
+        with:
+          name: mod-jars
+          path: build/libs/latest
+
+  test:
+    needs: build
+    strategy:
+      matrix:
+        version:
+          - { mc: 1.21.1, modloader: neoforge, regex: .*neoforge.*, java: 21, mc-runtime-test: neoforge }
+          - { mc: 1.21.1, modloader: fabric, regex: .*fabric.*, java: 21, mc-runtime-test: fabric }
+          - { mc: 1.20.1, modloader: forge, regex: .*forge.*, java: 17, mc-runtime-test: lexforge }
+          - { mc: 1.20.1, modloader: fabric, regex: .*fabric.*, java: 17, mc-runtime-test: fabric }
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ matrix.version.java }}
+      - name: Download mod jars
+        uses: actions/download-artifact@v3
+        with:
+          name: mod-jars
+      - name: Inspect downloaded files
+        run: |
+          echo "Inspecting '.' directory:" && ls -R . || echo "Directory not found."
+      - name: Create mods dir
+        run: mkdir -p run/mods
+      - name: Copy mod jar
+        run: |
+          MOD_JAR=$(find . -name "*-${{ matrix.version.modloader }}-*-${{ matrix.version.mc }}.jar" -print -quit)
+          if [ -z "$MOD_JAR" ]; then
+            echo "No matching mod jar found."
+            exit 1
+          fi
+          cp "$MOD_JAR" run/mods
+      - name: Run the MC client
+        uses: 3arthqu4ke/mc-runtime-test@3.0.0
+        with:
+          mc: ${{ matrix.version.mc }}
+          modloader: ${{ matrix.version.modloader }}
+          regex: ${{ matrix.version.regex }}
+          java: ${{ matrix.version.java }}
+          mc-runtime-test: ${{ matrix.version.mc-runtime-test }}
+          xvfb: false
+          headlessmc-command: -lwjgl --jvm -Djava.awt.headless=true
